@@ -8,27 +8,26 @@ import org.apache.spark.sql.hive.orc._
 object SparkSqlFlights {
   case class Carrier(code: String, description: String)
   case class Airport(iata:String, airport:String, city:String, state:String, country:String, lat:Double, long:Double)
-  case class Flight(year:Int/*0*/, month:Int/*1*/, day:Int/*2*/,carrierCode:String/*8*/, origin:String/*16*/, dest:String/*17*/, airports:Array[String])
+  case class Flight(year:Int/*0*/, month:Int/*1*/, day:Int/*2*/,carrierCode:String/*8*/, origin:String/*16*/, dest:String/*17*/, airports: Array[String])
 
   var dataDir=""
   def main(args:Array[String]){
 
-
     if ( System.getProperty("os.name") == "Windows 7") {
         System.setProperty("hadoop.home.dir", "C:\\BigData\\Hadoop")
-        dataDir = "file://D:\\Share\\Hive_Basics_p1\\airports.carrier.dataset\\"
+        dataDir = "D:\\Share\\Hive_Basics_p1\\airports.carrier.dataset\\"
     }else{
-      dataDir = "/Users/user/bigData/EPAM_hadoop_training/Hive_Basics_p1/airports.carrier.dataset/"
+        dataDir = "/Users/user/bigData/EPAM_hadoop_training/Hive_Basics_p1/airports.carrier.dataset/"
     }
     println(dataDir)
 
   val conf = new SparkConf().setAppName("SparkSqlFlights").setMaster("local")
-    conf.set("mapreduce.input.fileinputformat.input.dir.recursive", "true")
-  val sc = new SparkContext(conf)
-  //val sql = new SQLContext(sc)
-  val hql = new HiveContext(sc)
-  import hql.implicits._
 
+  val sc = new SparkContext(conf)
+    val hql = new HiveContext(sc)
+
+
+  import hql.implicits._
   // Define the schema using a case class.
 
 
@@ -59,7 +58,7 @@ object SparkSqlFlights {
       p(8),
       p(16),
       p(17),
-     Array(p(16), p(17)))
+      Array(p(16), p(17)))
     )
     .toDF.registerTempTable("flights")
    /* sql.cacheTable("flights")
@@ -143,5 +142,7 @@ object SparkSqlFlights {
   .collect()
   .foreach(println)
 */
+
+  /*  sql.sql("select count(*) from flights").collect().foreach(println)*/
 }
 }
