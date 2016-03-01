@@ -24,10 +24,10 @@ object SparkSqlFlights {
   val conf = new SparkConf().setAppName("SparkSqlFlights").setMaster("local")
 
   val sc = new SparkContext(conf)
-    val hql = new HiveContext(sc)
-
-
+  //val sql = new SQLContext(sc)
+  val hql = new HiveContext(sc)
   import hql.implicits._
+
   // Define the schema using a case class.
 
 
@@ -58,7 +58,7 @@ object SparkSqlFlights {
       p(8),
       p(16),
       p(17),
-      Array(p(16), p(17)))
+     Array(p(16), p(17)))
     )
     .toDF.registerTempTable("flights")
    /* sql.cacheTable("flights")
@@ -114,7 +114,7 @@ object SparkSqlFlights {
     "order by flightsCount desc " +
     "limit 5 )top5 join airports a on top5.iata=a.iata"
 )*/
-      hql.sql("SELECT year, month, day, airport FROM flights LATERAL VIEW explode(airports) tmpTable AS airport limit 100")
+      hql.sql("SELECT airport, count(*) number FROM flights LATERAL VIEW explode(airports) tmpTable AS airport group by airport order by number desc")
   .collect()
   .foreach(println)
 
