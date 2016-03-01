@@ -9,10 +9,18 @@ object SparkSqlFlights {
   case class Carrier(code: String, description: String)
   case class Airport(iata:String, airport:String, city:String, state:String, country:String, lat:Double, long:Double)
   case class Flight(year:Int/*0*/, month:Int/*1*/, day:Int/*2*/,carrierCode:String/*8*/, origin:String/*16*/, dest:String/*17*/, airports:Array[String])
-  //val dataDir = "/Users/user/bigData/EPAM_hadoop_training/Hive_Basics_p1/airports.carrier.dataset/"
-  val dataDir = "file://D:\\Share\\Hive_Basics_p1\\airports.carrier.dataset\\"
+
+  var dataDir=""
   def main(args:Array[String]){
-    System.setProperty("hadoop.home.dir", "C:\\BigData\\Hadoop")
+
+
+    if ( System.getProperty("os.name") == "Windows 7") {
+        System.setProperty("hadoop.home.dir", "C:\\BigData\\Hadoop")
+        dataDir = "file://D:\\Share\\Hive_Basics_p1\\airports.carrier.dataset\\"
+    }else{
+      dataDir = "/Users/user/bigData/EPAM_hadoop_training/Hive_Basics_p1/airports.carrier.dataset/"
+    }
+    println(dataDir)
 
   val conf = new SparkConf().setAppName("SparkSqlFlights").setMaster("local")
     conf.set("mapreduce.input.fileinputformat.input.dir.recursive", "true")
