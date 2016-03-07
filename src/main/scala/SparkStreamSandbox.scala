@@ -29,6 +29,8 @@ object SparkStreamSandbox {
   def processData(ssc: StreamingContext, settingsDF:DataFrame): Unit = {
     val lines = ssc.receiverStream(new CustomReceiverJnetPcap(networkDeviceName))
     val pairs = lines.map(r => (r.dIP, r.wirelen))
+
+    pairs.mapWithState()
     val sizeOfData = pairs.reduceByKey(_ + _)
     sizeOfData.print()
   }
