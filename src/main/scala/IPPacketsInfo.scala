@@ -3,10 +3,9 @@ import org.apache.spark.streaming.Time
 /**
   * Created by Andrii_Krasnolob on 3/4/2016.
   */
-class IPPacketsInfo(newIP:String, newWireLen:Int, newCount:Long)
+class IPPacketsInfo(newWireLen:Int, newCount:Long)
   extends Serializable {
 
-  var dIP:String = newIP
   var wirelen:Int = newWireLen
   var count:Long = newCount
   var timeStamp:Time = Time(0)
@@ -21,7 +20,7 @@ class IPPacketsInfo(newIP:String, newWireLen:Int, newCount:Long)
     timeStamp = time
   }
   override def toString: String = {
-    s"$dIP : $wirelen : $count : $timeStamp"
+    s"$wirelen : $count : $timeStamp"
   }
 
 }

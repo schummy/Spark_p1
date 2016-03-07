@@ -28,7 +28,7 @@ object SparkStreamSandbox {
 
   def processData(ssc: StreamingContext, settingsDF:DataFrame): Unit = {
     val lines = ssc.receiverStream(new CustomReceiverJnetPcap(networkDeviceName))
-    val pairs = lines.map(r =>(r._1, new IPPacketsInfo(r._1, r._2, 1)))
+    val pairs = lines.map(r =>(r._1, new IPPacketsInfo(r._2, 1)))
     //pairs.foreachRDD(x=> x.foreach(a => println(a._2.toString)))
 
     val stateSpec = StateSpec.function(trackStateFunc _)
@@ -39,7 +39,7 @@ object SparkStreamSandbox {
 
     stateSnapshotStream.foreachRDD(rdd => {
       println("-"*40)
-      rdd.sortByKey().foreach(a => println(a._2.toString))
+      rdd.sortByKey().foreach(a => println(a._1 + " => " + a._2.toString))
     })
   }
 
@@ -80,14 +80,25 @@ object SparkStreamSandbox {
     }
   }
 
-  def trackStateFunc(batchTime: Time, key: String, value: Option[IPPacketsInfo], state: State[IPPacketsInfo]): Option[(String, IPPacketsInfo)] = {
-    var currentState = state.getOption().getOrElse(new IPPacketsInfo(key, 0, 0))
-
-    val sum = value.getOrElse(new IPPacketsInfo(key, 0, 0)).wirelen + currentState.wirelen;
-    val count =  value.getOrElse(new IPPacketsInfo(key, 0, 0)).count + + currentState.count;
+  def trackStateFunc(batchTime: Time, key: String, value: Option[IPPacketsInfo], state: State[IPState]): Option[(String, IPState)] = {
+/*    val emptyValue = new IPPacketsInfo(0,0)
+    var currentState = state.getOption().getOrElse(emptyValue)
+    val sum = value.getOrElse(emptyValue).wirelen + currentState.wirelen;
+    val count =  value.getOrElse(emptyValue).count + currentState.count;
     currentState.setWireLen(sum)
     currentState.setCount(count)
     currentState.setTimeStamp(batchTime)
+    val output = (key, currentState)
+    state.update(currentState)
+    Some(output)*/
+
+    val emptyValue = new IPPacketsInfo(0,0)
+    val emptyState = new IPState()
+    val settings:Settings = new Settings("255.255.255.255", 1, 10.0, 500L)
+    var currentState = state.getOption().getOrElse(emptyState)
+    var currentValue:IPPacketsInfo = value.getOrElse(emptyValue)
+
+    currentState.addValue(currentValue, settings)
     val output = (key, currentState)
     state.update(currentState)
     Some(output)
