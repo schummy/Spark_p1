@@ -28,11 +28,19 @@ object SparkStreamSandbox {
 
   def processData(ssc: StreamingContext, settingsDF:DataFrame): Unit = {
     val lines = ssc.receiverStream(new CustomReceiverJnetPcap(networkDeviceName))
-    val pairs = lines.map(r => (r.dIP, r.wirelen))
+    val pairs = lines.map(r =>(r._1, new IPPacketsInfo(r._1, r._2, 1)))
+    //pairs.foreachRDD(x=> x.foreach(a => println(a._2.toString)))
 
-    pairs.mapWithState()
-    val sizeOfData = pairs.reduceByKey(_ + _)
-    sizeOfData.print()
+    val stateSpec = StateSpec.function(trackStateFunc _)
+    val wordCountStateStream = pairs.mapWithState(stateSpec)
+    //wordCountStateStream.print()
+
+    val stateSnapshotStream = wordCountStateStream.stateSnapshots()
+
+    stateSnapshotStream.foreachRDD(rdd => {
+      println("-"*40)
+      rdd.sortByKey().foreach(a => println(a._2.toString))
+    })
   }
 
   def createContext(): StreamingContext = {
@@ -40,9 +48,9 @@ object SparkStreamSandbox {
     val conf = new SparkConf().setMaster(s"local[$numberOfThreads]").setAppName(SparkStreamSandbox.getClass.toString)
     val ssc = new StreamingContext(conf, Seconds(batchInterval))
     val settings: DataFrame = getSettings(ssc)
-    //ssc.checkpoint(checkpointDirectory)
+    ssc.checkpoint(checkpointDirectory)
     processData(ssc, settings)
-
+    ssc.remember(Minutes(1))
     ssc
   }
 
@@ -70,5 +78,18 @@ object SparkStreamSandbox {
       LogManager.getRootLogger.error("Invalid default settings found")
       throw new scala.RuntimeException("Invalid default settings found")
     }
+  }
+
+  def trackStateFunc(batchTime: Time, key: String, value: Option[IPPacketsInfo], state: State[IPPacketsInfo]): Option[(String, IPPacketsInfo)] = {
+    var currentState = state.getOption().getOrElse(new IPPacketsInfo(key, 0, 0))
+
+    val sum = value.getOrElse(new IPPacketsInfo(key, 0, 0)).wirelen + currentState.wirelen;
+    val count =  value.getOrElse(new IPPacketsInfo(key, 0, 0)).count + + currentState.count;
+    currentState.setWireLen(sum)
+    currentState.setCount(count)
+    currentState.setTimeStamp(batchTime)
+    val output = (key, currentState)
+    state.update(currentState)
+    Some(output)
   }
 }
