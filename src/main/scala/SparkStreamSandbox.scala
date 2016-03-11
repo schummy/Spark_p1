@@ -1,6 +1,6 @@
 import org.apache.log4j.{Level, LogManager}
 import org.apache.spark._
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{Row, DataFrame}
 import org.apache.spark.sql.hive.HiveContext
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.StreamingContext._
@@ -16,6 +16,14 @@ object SparkStreamSandbox {
   val batchInterval: Long = 1
 
   def main(args:Array[String]) {
+    val setTmp = new IPSettings()
+    setTmp.add("255.255.255.255", 1, 10.0, 500L)
+    setTmp.add("255.255.255.255", 2, 20.0, 500L)
+    setTmp.add(null, 2, 30.0, 500L)
+    setTmp.add(null, 1, 40.0, 400L)
+    println(setTmp)
+
+    println (setTmp.get("255.255.285.255"))
 
     if ( System.getProperty("os.name") == "Windows 7") {
       System.setProperty("hadoop.home.dir", "C:\\BigData\\Hadoop")
@@ -26,14 +34,22 @@ object SparkStreamSandbox {
     ssc.awaitTermination()  // Wait for the computation to terminate
   }
 
-  def processData(ssc: StreamingContext, settings:DataFrame): Unit = {
+  def processData(ssc: StreamingContext): Unit = {
     val lines = ssc.receiverStream(new CustomReceiverJnetPcap(networkDeviceName))
 
-    val pairs = lines.map(r =>(r._1, {
-      settings.show()
-      (new IPPacketsInfo(r._2, 1), getSettings(settings, r._1)) }
-      )
-    )
+
+    val settings = loadSettings(ssc.sparkContext).collect
+
+    val ipSettings = new IPSettings
+    settings.foreach(r => ipSettings.add(
+        r.getAs[String]("hostIp")
+      , r.getAs[Long]("limitType").toInt
+      , r.getAs[Double]("value")
+      , r.getAs[Long]("period")))
+
+    val pairs = lines
+        .reduceByKey((a,b) => (a._1 + b._1, a._2 + b._2))
+      .map(r =>(r._1, (new IPPacketsInfo(r._2._1, r._2._2), ipSettings.get(r._1) ) ) )
 
     //pairs.foreachRDD(x=> x.foreach(a => println(a._2.toString)))
 
@@ -44,45 +60,28 @@ object SparkStreamSandbox {
     val stateSnapshotStream = wordCountStateStream.stateSnapshots()
 
     stateSnapshotStream.foreachRDD(rdd => {
-      println("-"*40)
+      println("?"*40)
       rdd.sortByKey().foreach(a => println(a._1 + " => " + a._2.toString))
     })
   }
 
-  def getSettings(settings: DataFrame, ip: String): Settings = {
-   // settings.show()
-/*    val tmp = settingsDF.filter(s"hostIp ='*' ").map(r => {
-      println(ip
-        , r.getAs[Int]("limitType")
-        , r.getAs[Double]("value")
-        , r.getAs[Long]("period"))
-      Settings( ip
-        , r.getAs[Int]("limitType")
-        , r.getAs[Double]("value")
-        , r.getAs[Long]("period"))} )
-      .collect()*/
-      //  .aggregate().
-//tmp.foreach(println)
-    new Settings("255.255.255.255", 1, 10.0, 500L)
-  }
+
 
   def createContext(): StreamingContext = {
     //println("-"*20+"createContext"+"-"*20)
     val conf = new SparkConf().setMaster(s"local[$numberOfThreads]").setAppName(SparkStreamSandbox.getClass.toString)
     val ssc = new StreamingContext(conf, Seconds(batchInterval))
-    val settings: DataFrame = loadSettings(ssc)
     ssc.checkpoint(checkpointDirectory)
-    settings.foreach(println)
-    processData(ssc, settings)
-    ssc.remember(Minutes(1))
+    processData(ssc)
+    ssc.remember(Seconds(10))
     ssc
   }
 
-  def loadSettings(ssc: StreamingContext): DataFrame = {
-    val hql = new HiveContext(ssc.sparkContext)
+  def loadSettings(sc: SparkContext): DataFrame = {
+    val hql = new HiveContext(sc)
     populateTestingData(hql)
     val settings: DataFrame = hql.sql("Select " +
-      "nvl(s1.hostIp, '*') as hostIp, " +
+      "s1.hostIp, " +
       "s1.limitType,  " +
       "nvl(s1.value, s2.value) as value, " +
       "nvl(s1.period, s2.period) as period " +
@@ -97,20 +96,21 @@ object SparkStreamSandbox {
   }
 
   def validateSettings(settings: DataFrame): Unit = {
-    val defaultRecord = settings.filter("hostIp = '*'")
+    val defaultRecord = settings.filter("hostIp is null")
    // defaultRecord.show()
-    if (defaultRecord.count() != 1) {
-      LogManager.getRootLogger.error("Default setting line should be exactly one")
-      throw new scala.RuntimeException("Default setting line should be exactly one")
+    if (defaultRecord.count() != 2) {
+      LogManager.getRootLogger.error("Table should always has two DEFAULT parameters")
+      throw new scala.RuntimeException("Table should always has two DEFAULT parameters")
     }
     val tmpDF = defaultRecord.filter("value is not null and period is not null and (limitType = 1  or limitType = 2)")
-    if (tmpDF.count() == 0) {
+    if (tmpDF.count() != 2) {
       LogManager.getRootLogger.error("Invalid default settings")
       throw new scala.RuntimeException("Invalid default settings")
     }
   }
 
-  def trackStateFunc(batchTime: Time, key: String, value: Option[(IPPacketsInfo, Settings)], state: State[IPState]): Option[(String, IPState)] = {
+  def trackStateFunc(batchTime: Time, key: String, value: Option[(IPPacketsInfo, IPLimits)], state: State[IPState]): Option[(String, IPState)] = {
+  //def trackStateFunc(batchTime: Time, key: String, value: Option[IPPacketsInfo], state: State[IPState]): Option[(String, IPState)] = {
 /*    val emptyValue = new IPPacketsInfo(0,0)
     var currentState = state.getOption().getOrElse(emptyValue)
     val sum = value.getOrElse(emptyValue).wirelen + currentState.wirelen;
@@ -123,11 +123,16 @@ object SparkStreamSandbox {
     Some(output)*/
 
     val emptyValue = (new IPPacketsInfo(0,0), null)
+    //val emptyValue = new IPPacketsInfo(0,0)
     val emptyState = new IPState()
-    //val settings:Settings = new Settings("255.255.255.255", 1, 10.0, 500L)
+    //val currentSettings2:IPSettings = new IPSettings()
 
     var currentState = state.getOption().getOrElse(emptyState)
     var (currentValue, currentSettings) = value.getOrElse(emptyValue)
+    currentValue.setTimeStamp(batchTime)
+    println("-"*30 + key + "-"*3 + currentValue.count + "-"*30)
+
+
     currentState.addValue(currentValue, currentSettings )
 
     val output = (key, currentState)

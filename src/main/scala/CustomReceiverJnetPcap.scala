@@ -25,7 +25,7 @@ import scala.collection.mutable.ArrayBuffer
 
 
 class CustomReceiverJnetPcap(var device:String)
-  extends Receiver[(String,Int)](StorageLevel.MEMORY_AND_DISK_2) with Logging  {
+  extends Receiver[(String,(Int, Int))](StorageLevel.MEMORY_AND_DISK_2) with Logging  {
   def main() {
     println("In main")
   }
@@ -51,7 +51,7 @@ class CustomReceiverJnetPcap(var device:String)
           dIP = packet.getHeader(ip).destination()
          // println(org.jnetpcap.packet.format.FormatUtils.ip(dIP)+"    "+packet.getCaptureHeader.wirelen().toString)
          // store(org.jnetpcap.packet.format.FormatUtils.ip(dIP)+","+packet.getCaptureHeader.wirelen().toString)
-          store((org.jnetpcap.packet.format.FormatUtils.ip(dIP), packet.getCaptureHeader.wirelen()))
+          store((org.jnetpcap.packet.format.FormatUtils.ip(dIP), (packet.getCaptureHeader.wirelen(), 1 )))
 
         }
       }

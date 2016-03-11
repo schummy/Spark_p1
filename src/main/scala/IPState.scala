@@ -10,15 +10,16 @@ class IPState
   var totalWireLen = 0
   var breached:Boolean = false
 
-  def addValue(iPPacketsInfo: IPPacketsInfo, settings: Settings): Unit ={
+  def addValue(iPPacketsInfo: IPPacketsInfo, settings: IPLimits): Unit ={
+    println("-"*30 + q.length + "-"*30)
     if (q.nonEmpty) {
-      var queueFront = q.front
 
-      while ((iPPacketsInfo.timeStamp - queueFront.timeStamp).milliseconds > settings.period * 1000) {
-        totalCount -= queueFront.count
-        totalWireLen -= queueFront.wirelen
+      while (q.nonEmpty &&
+        (iPPacketsInfo.timeStamp -  q.front.timeStamp).milliseconds > settings.getPeriod(1) * 1000 ) {
+        totalCount -=  q.front.count
+        totalWireLen -=  q.front.wirelen
         q.dequeue()
-        queueFront = q.front
+
       }
     }
     totalCount += iPPacketsInfo.count
@@ -27,13 +28,15 @@ class IPState
     checkBreach(settings)
   }
 
-  def checkBreach(settings: Settings): Boolean = {
-    var oldBreached:Boolean = breached
-    if (((settings.limitType == 1) && (totalWireLen / totalCount > settings.value))
-      || ((settings.limitType == 2) && (totalWireLen > settings.value)))
+  def checkBreach(settings: IPLimits): Boolean = {
+    var oldBreached = breached
+
+    if (((totalWireLen / totalCount > settings.getValue(1))) )
+     // || ((settings.limitType == 2) && (totalWireLen > settings.value)))
       breached = true
     else
       breached = false
+
 
     oldBreached != breached
   }
