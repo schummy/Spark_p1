@@ -1,3 +1,7 @@
+import java.util
+import java.util.Properties
+
+import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig}
 import org.apache.log4j.{Level, LogManager}
 import org.apache.spark._
 import org.apache.spark.sql.{Row, DataFrame}
@@ -5,6 +9,8 @@ import org.apache.spark.sql.hive.HiveContext
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.StreamingContext._
 import org.apache.spark.streaming.dstream.ReceiverInputDStream
+
+import scala.collection.mutable
 
 /**
   * Created by Andrii_Krasnolob on 3/3/2016.
@@ -16,6 +22,7 @@ object SparkStreamSandbox {
   val batchInterval: Long = 1
 
   def main(args:Array[String]) {
+/*
     val setTmp = new IPSettings()
     setTmp.add("255.255.255.255", 1, 10.0, 500L)
     setTmp.add("255.255.255.255", 2, 20.0, 500L)
@@ -24,6 +31,7 @@ object SparkStreamSandbox {
     println(setTmp)
 
     println (setTmp.get("255.255.285.255"))
+*/
 
     if ( System.getProperty("os.name") == "Windows 7") {
       System.setProperty("hadoop.home.dir", "C:\\BigData\\Hadoop")
@@ -36,36 +44,89 @@ object SparkStreamSandbox {
 
   def processData(ssc: StreamingContext): Unit = {
     val lines = ssc.receiverStream(new CustomReceiverJnetPcap(networkDeviceName))
-
-
     val settings = loadSettings(ssc.sparkContext).collect
-
     val ipSettings = new IPSettings
+
     settings.foreach(r => ipSettings.add(
-        r.getAs[String]("hostIp")
+      r.getAs[String]("hostIp")
       , r.getAs[Long]("limitType").toInt
       , r.getAs[Double]("value")
       , r.getAs[Long]("period")))
 
     val pairs = lines
-        .reduceByKey((a,b) => (a._1 + b._1, a._2 + b._2))
-      .map(r =>(r._1, (new IPPacketsInfo(r._2._1, r._2._2), ipSettings.get(r._1) ) ) )
+      .reduceByKey((a, b) => (a._1 + b._1, a._2 + b._2))
+      .map(r => (r._1, (new IPPacketsInfo(r._2._1, r._2._2), ipSettings.get(r._1))))
 
     //pairs.foreachRDD(x=> x.foreach(a => println(a._2.toString)))
+    val props: Properties = initKafkaProperties()
+    val kafkaSink = KafkaSink(props)
 
     val stateSpec = StateSpec.function(trackStateFunc _)
     val wordCountStateStream = pairs.mapWithState(stateSpec)
+      .foreachRDD((rdd, time) => {
+        println("-" * 40 + time)
+
+        //kafkaSink.send("alerts", "-" * 40 + time)
+
+        rdd.foreachPartition(
+          p => p.foreach(x => {
+
+            if (x._2._1.isReadyForALert) {
+              println(getAlertMessage(x._1, x._2._1))
+              kafkaSink.send("alerts", getAlertMessage(x._1, x._2._1))
+            }
+            if (x._2._2.isReadyForALert) {
+              println(getAlertMessage(x._1, x._2._2))
+              kafkaSink.send("alerts", getAlertMessage(x._1, x._2._2))
+            }
+
+          }
+          )
+        )
+      }
+      )
     //wordCountStateStream.print()
 
-    val stateSnapshotStream = wordCountStateStream.stateSnapshots()
+    /*
+        val stateSnapshotStream = wordCountStateStream.stateSnapshots()
 
-    stateSnapshotStream.foreachRDD(rdd => {
-      println("?"*40)
-      rdd.sortByKey().foreach(a => println(a._1 + " => " + a._2.toString))
-    })
+
+        stateSnapshotStream.foreachRDD((rdd, time) => {
+          println("-" * 40 + time)
+
+          //kafkaSink.send("alerts", "-" * 40 + time)
+
+          rdd.foreachPartition(
+            p => p.foreach(x => {
+
+              if (x._2._1.isReadyForALert) {
+                println(getAlertMessage(x._1, x._2._1))
+                kafkaSink.send("alerts", getAlertMessage(x._1, x._2._1))
+              }
+              if (x._2._2.isReadyForALert) {
+                println(getAlertMessage(x._1, x._2._2))
+                kafkaSink.send("alerts", getAlertMessage(x._1, x._2._2))
+              }
+
+            }
+            )
+          )
+        }
+        )
+    */
   }
 
 
+  def initKafkaProperties(): Properties = {
+    val props = new Properties()
+    props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092")
+    props.put(ProducerConfig.CLIENT_ID_CONFIG, "KafkaProducer")
+    props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
+      "org.apache.kafka.common.serialization.StringSerializer")
+    props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
+      "org.apache.kafka.common.serialization.StringSerializer")
+    props
+  }
 
   def createContext(): StreamingContext = {
     //println("-"*20+"createContext"+"-"*20)
@@ -109,34 +170,27 @@ object SparkStreamSandbox {
     }
   }
 
-  def trackStateFunc(batchTime: Time, key: String, value: Option[(IPPacketsInfo, IPLimits)], state: State[IPState]): Option[(String, IPState)] = {
-  //def trackStateFunc(batchTime: Time, key: String, value: Option[IPPacketsInfo], state: State[IPState]): Option[(String, IPState)] = {
-/*    val emptyValue = new IPPacketsInfo(0,0)
-    var currentState = state.getOption().getOrElse(emptyValue)
-    val sum = value.getOrElse(emptyValue).wirelen + currentState.wirelen;
-    val count =  value.getOrElse(emptyValue).count + currentState.count;
-    currentState.setWireLen(sum)
-    currentState.setCount(count)
-    currentState.setTimeStamp(batchTime)
-    val output = (key, currentState)
-    state.update(currentState)
-    Some(output)*/
+  def trackStateFunc(batchTime: Time, key: String, value: Option[(IPPacketsInfo, IPLimits)], state: State[(IPState, IPState)]): Option[(String, (IPState, IPState))] = {
 
     val emptyValue = (new IPPacketsInfo(0,0), null)
-    //val emptyValue = new IPPacketsInfo(0,0)
-    val emptyState = new IPState()
-    //val currentSettings2:IPSettings = new IPSettings()
+    val emptyState = (new IPState(), new IPState())
 
-    var currentState = state.getOption().getOrElse(emptyState)
+    var (currentState_1, currentState_2) = state.getOption().getOrElse(emptyState)
     var (currentValue, currentSettings) = value.getOrElse(emptyValue)
     currentValue.setTimeStamp(batchTime)
-    println("-"*30 + key + "-"*3 + currentValue.count + "-"*30)
 
+    currentState_1.addValue(currentValue, 1, currentSettings.getPeriod(1),currentSettings.getValue(1) )
+    currentState_2.addValue(currentValue, 2, currentSettings.getPeriod(2),currentSettings.getValue(2) )
 
-    currentState.addValue(currentValue, currentSettings )
-
-    val output = (key, currentState)
-    state.update(currentState)
+    val output = (key, (currentState_1, currentState_2))
+    state.update((currentState_1, currentState_2))
     Some(output)
+  }
+
+  def getAlertMessage(key:String, state:IPState ): String ={
+    var (limitType, thresholdValue) = if (state.limitType == 1) ("Threshold", state.totalWireLen/state.totalCount) else ("Limit",  state.totalWireLen)
+    var isBreached = if (state.breached) "Exceeded" else "Norm"
+
+    s"${java.util.UUID.randomUUID()} ${limitType}${isBreached} for $key ${state.q.last.timeStamp} FactValue=${thresholdValue}, ThresholdValue=${state.value}, Period = ${state.period}"
   }
 }

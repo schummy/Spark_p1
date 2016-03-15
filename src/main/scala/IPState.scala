@@ -9,13 +9,19 @@ class IPState
   var totalCount = 0L
   var totalWireLen = 0
   var breached:Boolean = false
+  var isReadyForALert:Boolean = false
+  var limitType = 0
+  var period = 0l
+  var value = 0.
+  def addValue(iPPacketsInfo: IPPacketsInfo, limitTypeNew:Int, periodNew:Long, valueNew:Double): Boolean ={
+    limitType = limitTypeNew
+    period = periodNew
+    value = valueNew
 
-  def addValue(iPPacketsInfo: IPPacketsInfo, settings: IPLimits): Unit ={
-    println("-"*30 + q.length + "-"*30)
     if (q.nonEmpty) {
 
       while (q.nonEmpty &&
-        (iPPacketsInfo.timeStamp -  q.front.timeStamp).milliseconds > settings.getPeriod(1) * 1000 ) {
+        (iPPacketsInfo.timeStamp -  q.front.timeStamp).milliseconds > period * 1000 ) {
         totalCount -=  q.front.count
         totalWireLen -=  q.front.wirelen
         q.dequeue()
@@ -25,21 +31,21 @@ class IPState
     totalCount += iPPacketsInfo.count
     totalWireLen += iPPacketsInfo.wirelen
     q.enqueue(iPPacketsInfo)
-    checkBreach(settings)
+    isReadyForALert = checkBreach(limitType, value)
+    isReadyForALert
   }
 
-  def checkBreach(settings: IPLimits): Boolean = {
+  def checkBreach(limitType:Int, value: Double): Boolean = {
     var oldBreached = breached
 
-    if (((totalWireLen / totalCount > settings.getValue(1))) )
-     // || ((settings.limitType == 2) && (totalWireLen > settings.value)))
+    if (( limitType == 1 && (totalWireLen / totalCount > value) )
+       || ( limitType == 2 &&( totalWireLen > value ) ) )
       breached = true
     else
       breached = false
-
-
     oldBreached != breached
   }
+
   override def toString: String = {
     s"$totalCount : $totalWireLen : $breached"
   }
