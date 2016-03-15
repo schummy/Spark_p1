@@ -9,6 +9,7 @@ import org.apache.spark.sql.hive.HiveContext
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.StreamingContext._
 import org.apache.spark.streaming.dstream.ReceiverInputDStream
+import org.joda.time.Hours
 
 import scala.collection.mutable
 
@@ -44,7 +45,8 @@ object SparkStreamSandbox {
 
   def processData(ssc: StreamingContext): Unit = {
     val lines = ssc.receiverStream(new CustomReceiverJnetPcap(networkDeviceName))
-    val settings = loadSettings(ssc.sparkContext).collect
+    val hql = new HiveContext(ssc.sparkContext)
+    val settings = loadSettings(hql).collect
     val ipSettings = new IPSettings
 
     settings.foreach(r => ipSettings.add(
@@ -53,33 +55,44 @@ object SparkStreamSandbox {
       , r.getAs[Double]("value")
       , r.getAs[Long]("period")))
 
-    val pairs = lines
+    val reducedStream = lines
       .reduceByKey((a, b) => (a._1 + b._1, a._2 + b._2))
+
+    val hourlySnaphot = reducedStream.window(Minutes(1), Minutes(1)).reduceByKeyAndWindow( (a, b) => (a._1 + b._1, a._2 + b._2), Minutes(1) )
+
+
+    hourlySnaphot
+      .foreachRDD(
+        (rdd,time) => {
+          hql.createDataFrame(rdd).registerTempTable("temp")
+          hql.sql("select *, '"+time+"' as timeStamp from temp").collect().foreach(println)
+          //hql.sql("INSERT INTO hourlySatistic select * from temp")
+        }
+
+      )
+
+
+    val packetsWithSettings=reducedStream
       .map(r => (r._1, (new IPPacketsInfo(r._2._1, r._2._2), ipSettings.get(r._1))))
 
-    //pairs.foreachRDD(x=> x.foreach(a => println(a._2.toString)))
     val props: Properties = initKafkaProperties()
     val kafkaSink = KafkaSink(props)
 
     val stateSpec = StateSpec.function(trackStateFunc _)
-    val wordCountStateStream = pairs.mapWithState(stateSpec)
+    val wordCountStateStream = packetsWithSettings.mapWithState(stateSpec)
       .foreachRDD((rdd, time) => {
         println("-" * 40 + time)
 
-        //kafkaSink.send("alerts", "-" * 40 + time)
-
         rdd.foreachPartition(
           p => p.foreach(x => {
-
-            if (x._2._1.isReadyForALert) {
+            if (x._2._1.isReadyForALert  && x._2._1.breached) {
               println(getAlertMessage(x._1, x._2._1))
               kafkaSink.send("alerts", getAlertMessage(x._1, x._2._1))
             }
-            if (x._2._2.isReadyForALert) {
+            if (x._2._2.isReadyForALert && x._2._2.breached) {
               println(getAlertMessage(x._1, x._2._2))
               kafkaSink.send("alerts", getAlertMessage(x._1, x._2._2))
             }
-
           }
           )
         )
@@ -129,17 +142,16 @@ object SparkStreamSandbox {
   }
 
   def createContext(): StreamingContext = {
-    //println("-"*20+"createContext"+"-"*20)
     val conf = new SparkConf().setMaster(s"local[$numberOfThreads]").setAppName(SparkStreamSandbox.getClass.toString)
     val ssc = new StreamingContext(conf, Seconds(batchInterval))
     ssc.checkpoint(checkpointDirectory)
     processData(ssc)
-    ssc.remember(Seconds(10))
+   // ssc.remember(Seconds(10))
     ssc
   }
 
-  def loadSettings(sc: SparkContext): DataFrame = {
-    val hql = new HiveContext(sc)
+  def loadSettings(hql: HiveContext): DataFrame = {
+
     populateTestingData(hql)
     val settings: DataFrame = hql.sql("Select " +
       "s1.hostIp, " +
