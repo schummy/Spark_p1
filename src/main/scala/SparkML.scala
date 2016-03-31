@@ -27,14 +27,25 @@ object SparkML {
 
     val parsedData = data.map { line =>
       val parts = line.split(',')
-            LabeledPoint(parts(0).toDouble, Vectors.dense(parts.tail.map(x => x.toDouble))
-      )
+
+            var featureSeq:Seq[(Int,Double)] =  Seq[(Int,Double)]()
+            for  ( i <- 1 to parts.tail.length-1){
+              try {
+                featureSeq :+(i, parts(i).toDouble)
+              }
+              catch {
+                case e: NumberFormatException => 0
+              }
+            }
+
+            var featureVector = Vectors.sparse(parts.tail.length, featureSeq)
+            LabeledPoint(parts(0).toDouble, featureVector)
     }
     val splits = parsedData.randomSplit(Array(0.7, 0.3))
     val (trainingData, testData) = (splits(0), splits(1))
 
 
-    val numClasses = 2
+    val numClasses = 100
     val categoricalFeaturesInfo = Map[Int, Int]()
     val numTrees = 3 // Use more in practice.
     val featureSubsetStrategy = "auto" // Let the algorithm choose.
